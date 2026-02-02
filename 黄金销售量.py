@@ -1,351 +1,194 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# #  数据展示
-
-# In[193]:
-
-
+import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from statsmodels.tsa.seasonal import seasonal_decompose
-import calendar
-# 设置中文显示和图形样式
-plt.rcParams['font.sans-serif'] = ['SimHei']
-plt.rcParams['axes.unicode_minus'] = False
-sns.set_style('whitegrid')
-
-# 加载数据
-df = pd.read_excel('data.xlsx', sheet_name='Sheet1')
-
-# 数据清洗
-df['交易日期'] = pd.to_datetime(df['交易日期'])
-df = df.groupby('交易日期').mean().reset_index()  # 处理重复日期
-df = df.sort_values('交易日期').reset_index(drop=True)
-
-# 添加时间特征
-df['月份'] = df['交易日期'].dt.month
-df['季度'] = df['交易日期'].dt.quarter
-df['星期'] = df['交易日期'].dt.dayofweek + 1  # 1-7表示周一到周日
-df['是否周末'] = df['星期'].isin([6, 7]).astype(int)
-df['月日'] = df['交易日期'].dt.strftime('%m-%d')
-
-# 检查数据
-print("数据概览:")
-print(df.head())
-print("\n数据信息:")
-print(df.info())
-print("\n基本统计描述:")
-print(df.describe())
-
-
-# In[195]:
-
-
-plt.rcParams['font.sans-serif']=['SimHei'] #用来正常显示中文标签
-plt.rcParams['axes.unicode_minus']=False #用来正常显示负号
-plt.figure(figsize=(15, 8))
-plt.plot(df['交易日期'], df['销售量（克）'], marker='o', linestyle='-', linewidth=1, markersize=4)
-plt.title('销售量时间序列趋势', fontsize=15)
-plt.xlabel('日期', fontsize=12)
-plt.ylabel('销售量（克）', fontsize=12)
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-
-# In[196]:
-
-
-plt.figure(figsize=(15, 10))
-
-# 直方图
-plt.subplot(2, 2, 1)
-sns.histplot(df['销售量（克）'], bins=20, kde=True)
-plt.title('销售量分布直方图')
-
-# 箱线图
-plt.subplot(2, 2, 2)
-sns.boxplot(y=df['销售量（克）'])
-plt.title('销售量箱线图')
-
-# 密度图
-plt.subplot(2, 2, 3)
-sns.kdeplot(df['销售量（克）'], shade=True)
-plt.title('销售量密度图')
-
-# QQ图
-plt.subplot(2, 2, 4)
-import scipy.stats as stats
-stats.probplot(df['销售量（克）'], dist="norm", plot=plt)
-plt.title('QQ图 - 正态性检验')
-
-plt.tight_layout()
-plt.show()
-
-
-# # 缺失值处理
-
-# In[199]:
-
-
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from sklearn.impute import KNNImputer
-from statsmodels.tsa.seasonal import seasonal_decompose
-
-# 重新加载原始数据
-df = pd.read_excel('data.xlsx', sheet_name='Sheet1')
-df['交易日期'] = pd.to_datetime(df['交易日期'])
-df = df.groupby('交易日期').mean().reset_index()  # 处理重复日期
-df = df.sort_values('交易日期').reset_index(drop=True)
-
-# 检查日期连续性
-print("原始数据日期范围:", df['交易日期'].min(), "至", df['交易日期'].max())
-print("原始数据天数:", len(df))
-print("理论工作日天数:", len(pd.date_range(start=df['交易日期'].min(), end=df['交易日期'].max(), freq='B')))
-
-
-# In[201]:
-
-
-# 创建完整的工作日日期范围
-full_dates = pd.date_range(start=df['交易日期'].min(), end=df['交易日期'].max(), freq='B')
-missing_dates = full_dates.difference(df['交易日期'])
-print("\n缺失日期数量:", len(missing_dates))
-print("缺失日期示例:", missing_dates[:5])  # 显示前5个缺失日期
-
-
-# In[204]:
-
-
-df_complete = df.set_index('交易日期').reindex(full_dates).reset_index()
-df_complete.rename(columns={'index':'交易日期'}, inplace=True)
-
-# 添加时间特征辅助插值
-df_complete['星期'] = df_complete['交易日期'].dt.dayofweek + 1
-df_complete['月份'] = df_complete['交易日期'].dt.month
-df_complete['年度周数'] = df_complete['交易日期'].dt.isocalendar().week
-
-# 方法2：线性插值（简单时间序列）
-df_line = df_complete.copy()  # 改为英文命名避免混淆
-df_line['销售量（克）_线性插值'] = df_line['销售量（克）'].interpolate(method='linear')
-
-# 方法3：季节性分解插值
-def seasonal_interpolate(series, period=5):
-    """基于季节性分解的插值方法"""
-    decomposed = seasonal_decompose(series.interpolate(method='linear'), period=period)
-    seasonal = decomposed.seasonal
-    trend = decomposed.trend
-    resid = decomposed.resid
-    
-    # 用趋势+季节性填充缺失值
-    reconstructed = trend + seasonal
-    return np.where(np.isnan(series), reconstructed, series)
-
-df_season = df_complete.copy()  # 改为英文命名避免混淆
-df_season['销售量（克）_季节插值'] = seasonal_interpolate(df_season['销售量（克）'])
-
-# 方法4：KNN插值（考虑星期特征）
-df_knn = df_complete.copy()
-imputer = KNNImputer(n_neighbors=5)
-df_knn[['销售量（克）_KNN']] = imputer.fit_transform(df_knn[['销售量（克）','星期']])[:,0].reshape(-1,1)
-
-# 合并所有插值结果（使用修正后的变量名）
-method_mapping = {
-    '线性插值': 'line',
-    '季节插值': 'season',
-    'KNN': 'knn'
-}
-
-for method_cn, method_en in method_mapping.items():
-    df_complete[f'销售量（克）_{method_cn}'] = eval(f'df_{method_en}')[f'销售量（克）_{method_cn}']
-df = df_complete
-
-
-# In[206]:
-
-
-df_complete
-
-
-# In[208]:
-
-
-df_complete = df_complete.drop(df.columns.difference(['交易日期','销售量（克）_线性插值']), axis=1)
-df_complete.rename(columns={"销售量（克）_线性插值": "销售量（克）"}, inplace=True)
-df = df_complete
-df
-
-
-# In[250]:
-
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
+from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.callbacks import EarlyStopping
-import math
 import warnings
 warnings.filterwarnings('ignore')
-# 1. 数据准备
-# 读取Excel文件
-# df = pd.read_excel('data.xlsx', sheet_name='Sheet1')
 
-# 检查数据
-print(df.head())
-print(df.info())
+# 页面配置
+st.set_page_config(page_title="黄金销售量预测工具", page_icon="📈", layout="wide")
 
-# 处理重复日期（假设是数据录入错误，取平均值）
-df = df.groupby('交易日期').mean().reset_index()
+# 标题
+st.title("📈 黄金销售量智能预测工具")
+st.markdown("上传历史销售数据，AI 自动预测未来趋势")
 
-# 确保按日期排序
-df = df.sort_values('交易日期')
-df['交易日期'] = pd.to_datetime(df['交易日期'])
-
-
-# 2. 数据预处理
-# 使用销售量作为特征
-data = df['销售量（克）'].values.reshape(-1, 1)
-
-# 归一化
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(data)
-
-# 创建数据集
-def create_dataset(dataset, look_back=1):
-    X, Y = [], []
-    for i in range(len(dataset)-look_back-1):
-        a = dataset[i:(i+look_back), 0]
-        X.append(a)
-        Y.append(dataset[i + look_back, 0])
-    return np.array(X), np.array(Y)
-
-# 选择时间窗口
-look_back = 6
-X, y = create_dataset(scaled_data, look_back)
-
-# 划分训练集和测试集 (7:3)
-train_size = int(len(X) * 0.7)
-test_size = len(X) - train_size
-X_train, X_test = X[0:train_size], X[train_size:len(X)]
-y_train, y_test = y[0:train_size], y[train_size:len(y)]
-
-# 重塑为LSTM输入格式 [samples, time steps, features]
-X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-
-# 3. 构建LSTM模型
-model = Sequential()
-model.add(LSTM(50, return_sequences=True, input_shape=(look_back, 1)))
-model.add(LSTM(50))
-model.add(Dense(1))
-model.compile(loss='mean_squared_error', optimizer='adam')
-
-# 早停法
-early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-
-# 训练模型
-history = model.fit(X_train, y_train, 
-                   validation_data=(X_test, y_test), 
-                   epochs=500, 
-                   batch_size=20, 
-                   verbose=1
-                   # ,callbacks=[early_stop]
-                   )
-
-# 4. 预测
-train_predict = model.predict(X_train)
-test_predict = model.predict(X_test)
-
-# 反归一化
-train_predict = scaler.inverse_transform(train_predict)
-y_train = scaler.inverse_transform([y_train])
-test_predict = scaler.inverse_transform(test_predict)
-y_test = scaler.inverse_transform([y_test])
-
-# 5. 评估指标
-def evaluate_metrics(y_true, y_pred):
-    mse = mean_squared_error(y_true, y_pred)
-    rmse = math.sqrt(mse)
-    mae = mean_absolute_error(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
+# 侧边栏配置
+with st.sidebar:
+    st.header("⚙️ 预测设置")
+    forecast_days = st.slider("预测天数", 7, 90, 30)
+    train_ratio = st.slider("训练数据比例", 0.5, 0.9, 0.8)
     
-    print(f'MSE: {mse:.2f}')
-    print(f'RMSE: {rmse:.2f}')
-    print(f'MAE: {mae:.2f}')
-    print(f'R2 Score: {r2:.2f}')
+    st.markdown("---")
+    st.markdown("**数据格式要求：**")
+    st.markdown("- 必须包含 '交易日期' 列")
+    st.markdown("- 必须包含 '销售量（克）' 列")
+    st.markdown("- 支持 .xlsx 或 .xls 格式")
+
+# 文件上传
+uploaded_file = st.file_uploader("📁 上传销售数据", type=['xlsx', 'xls'])
+
+if uploaded_file is not None:
+    try:
+        # 读取数据
+        df = pd.read_excel(uploaded_file)
+        
+        # 检查必要列
+        required_cols = ['交易日期', '销售量（克）']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            st.error(f"❌ 缺少必要列：{missing_cols}")
+            st.info("请确保 Excel 中包含 '交易日期' 和 '销售量（克）' 两列")
+        else:
+            # 数据预处理
+            df['交易日期'] = pd.to_datetime(df['交易日期'])
+            df = df.groupby('交易日期')['销售量（克）'].mean().reset_index()
+            df = df.sort_values('交易日期').reset_index(drop=True)
+            
+            # 数据展示
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("数据天数", len(df))
+            with col2:
+                st.metric("平均日销量", f"{df['销售量（克）'].mean():.2f}克")
+            with col3:
+                st.metric("最高日销量", f"{df['销售量（克）'].max():.2f}克")
+            
+            # 原始数据图表
+            st.subheader("📊 历史销售趋势")
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(df['交易日期'], df['销售量（克）'], marker='o', linewidth=1, markersize=3)
+            ax.set_xlabel('日期')
+            ax.set_ylabel('销售量（克）')
+            ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+            
+            # 预测按钮
+            if st.button("🚀 开始 AI 预测", type="primary"):
+                with st.spinner('AI 分析中，请稍候...'):
+                    
+                    # 划分训练集和测试集
+                    train_size = int(len(df) * train_ratio)
+                    train_data = df['销售量（克）'][:train_size]
+                    test_data = df['销售量（克）'][train_size:]
+                    
+                    # 训练 ARIMA 模型
+                    try:
+                        model = ARIMA(train_data, order=(5, 1, 0))
+                        model_fit = model.fit()
+                        
+                        # 预测测试集（用于评估）
+                        test_predict = model_fit.forecast(steps=len(test_data))
+                        
+                        # 评估指标
+                        mse = mean_squared_error(test_data, test_predict)
+                        rmse = np.sqrt(mse)
+                        mae = mean_absolute_error(test_data, test_predict)
+                        r2 = r2_score(test_data, test_predict)
+                        
+                        # 用全部数据重新训练，预测未来
+                        final_model = ARIMA(df['销售量（克）'], order=(5, 1, 0))
+                        final_model_fit = final_model.fit()
+                        future_forecast = final_model_fit.forecast(steps=forecast_days)
+                        
+                        # 生成未来日期
+                        last_date = df['交易日期'].iloc[-1]
+                        future_dates = pd.date_range(start=last_date, periods=forecast_days+1, freq='B')[1:]
+                        
+                        # 评估指标展示
+                        st.subheader("📋 模型评估")
+                        eval_col1, eval_col2, eval_col3, eval_col4 = st.columns(4)
+                        with eval_col1:
+                            st.metric("RMSE", f"{rmse:.2f}")
+                        with eval_col2:
+                            st.metric("MAE", f"{mae:.2f}")
+                        with eval_col3:
+                            st.metric("R² Score", f"{r2:.2f}")
+                        with eval_col4:
+                            st.metric("预测天数", f"{forecast_days}天")
+                        
+                        # 预测结果图表
+                        st.subheader("🔮 预测结果")
+                        fig2, ax2 = plt.subplots(figsize=(14, 6))
+                        
+                        # 历史数据
+                        ax2.plot(df['交易日期'], df['销售量（克）'], 
+                                label='历史数据', color='blue', linewidth=1.5)
+                        
+                        # 测试集预测（如果有）
+                        if len(test_data) > 0:
+                            test_dates = df['交易日期'][train_size:]
+                            ax2.plot(test_dates, test_predict, 
+                                    label='测试集预测', color='green', linestyle='--', alpha=0.7)
+                        
+                        # 未来预测
+                        ax2.plot(future_dates, future_forecast, 
+                                label='未来预测', color='red', linewidth=2, marker='o', markersize=4)
+                        
+                        ax2.axvline(x=last_date, color='gray', linestyle=':', alpha=0.5, label='预测起点')
+                        ax2.set_xlabel('日期')
+                        ax2.set_ylabel('销售量（克）')
+                        ax2.legend()
+                        ax2.grid(True, alpha=0.3)
+                        st.pyplot(fig2)
+                        
+                        # 预测数据表格
+                        st.subheader("📄 详细预测数据")
+                        forecast_df = pd.DataFrame({
+                            '日期': future_dates,
+                            '预测销售量（克）': future_forecast.round(2),
+                            '预测区间下限': (future_forecast * 0.9).round(2),
+                            '预测区间上限': (future_forecast * 1.1).round(2)
+                        })
+                        st.dataframe(forecast_df, use_container_width=True)
+                        
+                        # 下载按钮
+                        csv = forecast_df.to_csv(index=False, encoding='utf-8-sig')
+                        st.download_button(
+                            label="⬇️ 下载完整预测报告 (CSV)",
+                            data=csv,
+                            file_name=f"黄金销售预测_{forecast_days}天.csv",
+                            mime="text/csv"
+                        )
+                        
+                        # 分析建议
+                        st.subheader("💡 智能分析建议")
+                        avg_forecast = future_forecast.mean()
+                        last_avg = df['销售量（克）'].tail(30).mean()
+                        trend = "上升" if avg_forecast > last_avg else "下降"
+                        
+                        st.info(f"""
+                        - 未来{forecast_days}天平均日销量预测：**{avg_forecast:.2f}克**
+                        - 与近30天平均（{last_avg:.2f}克）相比呈**{trend}趋势**
+                        - 建议根据预测提前调整库存和采购计划
+                        """)
+                        
+                    except Exception as e:
+                        st.error(f"预测出错：{str(e)}")
+                        st.info("请检查数据是否足够（建议至少60天数据）")
+                        
+    except Exception as e:
+        st.error(f"文件读取失败：{str(e)}")
+        st.info("请确保上传的是有效的 Excel 文件")
+
+else:
+    # 示例展示
+    st.info("👆 请上传数据文件开始分析")
     
-    return mse, rmse, mae, r2
+    with st.expander("📝 查看示例数据格式"):
+        sample_data = pd.DataFrame({
+            '交易日期': ['2024-01-01', '2024-01-02', '2024-01-03'],
+            '销售量（克）': [150.5, 180.2, 165.8]
+        })
+        st.write(sample_data)
+        st.download_button(
+            "下载示例模板",
+            sample_data.to_csv(index=False),
+            "示例数据模板.csv"
+        )
 
-
-
-# In[252]:
-
-
-print("Train Metrics:")
-train_metrics = evaluate_metrics(y_train[0], train_predict[:,0])
-
-print("\nTest Metrics:")
-test_metrics = evaluate_metrics(y_test[0], test_predict[:,0])
-
-
-# In[254]:
-
-
-###### # 6. 可视化
-plt.figure(figsize=(15, 8))
-
-# 训练损失
-plt.subplot(2, 2, 1)
-plt.plot(history.history['loss'], label='Train Loss')
-plt.plot(history.history['val_loss'], label='Validation Loss')
-plt.title('Model Loss')
-plt.ylabel('Loss')
-plt.xlabel('Epoch')
-plt.legend()
-
-# 原始数据与预测数据对比
-train_predict_plot = np.empty_like(data)
-train_predict_plot[:, :] = np.nan
-train_predict_plot[look_back:look_back+len(train_predict), :] = train_predict
-
-test_predict_plot = np.empty_like(data)
-test_predict_plot[:, :] = np.nan
-test_predict_plot[look_back+len(train_predict):look_back+len(train_predict)+len(test_predict), :] = test_predict
-
-plt.subplot(2, 1, 2)
-plt.plot(df['交易日期'], data, label='Actual Data')
-plt.plot(df['交易日期'], train_predict_plot, label='Training Prediction')
-plt.plot(df['交易日期'], test_predict_plot, label='Testing Prediction')
-plt.title('Sales Prediction')
-plt.xlabel('Date')
-plt.ylabel('Sales (g)')
-plt.legend()
-
-# 测试集详细对比
-plt.figure(figsize=(15, 5))
-test_dates = df['交易日期'][look_back+len(train_predict)+1:look_back+len(train_predict)+len(test_predict)+1]
-plt.plot(test_dates, y_test[0], label='Actual Test Data')
-plt.plot(test_dates, test_predict[:,0], label='Predicted Test Data')
-plt.title('Test Set Prediction vs Actual')
-plt.xlabel('Date')
-plt.ylabel('Sales (g)')
-plt.legend()
-
-plt.tight_layout()
-plt.show()
-
-
-# In[ ]:
-
-
-
-
+# 页脚
+st.markdown("---")
+st.caption("技术支持 | 基于 ARIMA 时序预测模型")
