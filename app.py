@@ -7,6 +7,16 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import warnings
 warnings.filterwarnings('ignore')
 
+# 隐藏 GitHub 链接和菜单
+hide_github = """
+<style>
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_github, unsafe_allow_html=True)
+
 # 页面配置
 st.set_page_config(page_title="黄金销售量预测工具", page_icon="📈", layout="wide")
 
